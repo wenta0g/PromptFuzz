@@ -28,3 +28,4 @@
 ./experiments
 /output_*
 *.pyc
+.env_template

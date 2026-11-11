@@ -22,6 +22,12 @@ $ tmux new
 -----
 For developers and advance usage, see [DEVELOPER.md](DEVELOPER.md).
 
+## pre-requisite
+LLM connectivity test: 
+```
+cargo test --lib request::openai::tests::test_llm_connectivity -- --ignored --nocapture --test-threads=1
+```
+
 ## 🦄Basic Usage
 
 ### 1. Build library

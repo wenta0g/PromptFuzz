@@ -77,8 +77,13 @@ pub fn is_critical_err<T>(err: &Result<T>) -> Critical {
             _ => (),
         };
         match err.downcast_ref::<OpenAIError>() {
-            Some(OpenAIError::JSONDeserialize(_)) => {
+            Some(OpenAIError::JSONDeserialize(json_err)) => {
                 log::warn!("{:#?}", err);
+                if json_err.is_eof() {
+                    log::warn!(
+                        "The LLM returned an empty body. OPENAI_ENDPOINT must be the API root, not the full chat URL. Gemini: https://generativelanguage.googleapis.com/v1beta/openai"
+                    );
+                }
                 std::thread::sleep(std::time::Duration::from_secs(30));
                 return Critical::NonCritical;
             }

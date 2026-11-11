@@ -87,14 +87,41 @@ pub fn get_openai_endpoint() -> String {
     OPENAI_ENDPOINT.get().unwrap().to_string()
 }
 
+/// Base URL that `async-openai` joins with `/chat/completions`.
+///
+/// A trailing slash becomes `.../openai//chat/completions`. A curl URL that
+/// already ends in `/chat/completions` is appended a second time. Gemini
+/// answers both of those paths with an empty body, which this crate reports
+/// as `JSONDeserialize(EOF while parsing a value)`.
+pub fn normalize_openai_endpoint(endpoint: &str) -> String {
+    let mut endpoint = endpoint
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'')
+        .trim()
+        .trim_end_matches('/')
+        .to_string();
+
+    if let Some(stripped) = endpoint.strip_suffix("/chat/completions") {
+        endpoint = stripped.trim_end_matches('/').to_string();
+    }
+    // Google documents `.../v1beta/openai/`. `.../openai/v1` is not that root.
+    if endpoint.contains("generativelanguage.googleapis.com") {
+        if let Some(stripped) = endpoint.strip_suffix("/openai/v1") {
+            endpoint = format!("{}/openai", stripped.trim_end_matches('/'));
+        }
+    }
+    endpoint
+}
+
 pub fn init_openai_env() {
     let model =
         std::env::var("OPENAI_MODEL_NAME").unwrap_or_else(|_| panic!("OPENAI_MODEL_NAME not set"));
     let endpoint =
         std::env::var("OPENAI_ENDPOINT").unwrap_or_else(|_| panic!("OPENAI_ENDPOINT not set"));
 
-    OPENAI_MODEL_NAME.set(model).unwrap();
-    OPENAI_ENDPOINT.set(endpoint).unwrap();
+    // Tests call this more than once in one process. Keep the first value.
+    let _ = OPENAI_MODEL_NAME.set(model);
+    let _ = OPENAI_ENDPOINT.set(endpoint);
 }
 
 pub fn get_config() -> RwLockReadGuard<'static, Config> {
@@ -208,7 +235,7 @@ impl Config {
             output: "output".to_string(),
         };
         let _ = CONFIG_INSTANCE.set(RwLock::new(config));
-        crate::init_debug_logger().unwrap();
+        let _ = crate::init_debug_logger();
     }
 }
 
