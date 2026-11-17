@@ -786,6 +786,11 @@ impl Executor {
         if !corpus.exists() {
             eyre::bail!("fuzzer corpus {corpus:?} does not exist!")
         }
+        // libFuzzer only loads a seed directory given as a positional argument.
+        // The process cwd is Fuzzer_*/work, so the path has to be absolute.
+        let corpus = corpus.canonicalize().unwrap_or_else(|_| corpus.to_path_buf());
+        let corpus_files = crate::deopt::utils::read_all_files_in_dir(&corpus)?.len();
+        log::info!("Loading libFuzzer corpus {corpus:?} ({corpus_files} files)");
 
         let log_file: PathBuf = [fuzzer_dir.clone(), "fuzz.log".into()].iter().collect();
         let mut extra_args = Vec::new();
@@ -801,6 +806,7 @@ impl Executor {
                 extra_args.push(OsString::from("-fork=1"));
             }
         }
+        extra_args.push(corpus.as_os_str().to_os_string());
 
         let child = self.spawn(
             fuzzer_binary,
@@ -845,16 +851,33 @@ impl Executor {
                 continue;
             }
             let fuzzer_binary: PathBuf = [path.clone(), "fuzzer".into()].iter().collect();
+            // `fuzzer` is the libFuzzer build and does not emit .sancov files.
+            // Coverage minimization has to run the binary fuse compiled as fuzzer.sancov.
+            let fuzzer_sancov = fuzzer_binary.with_extension("sancov");
             let corpus: PathBuf = [path.clone(), "corpus".into()].iter().collect();
             let minimize: PathBuf = [path.clone(), "minimized".into()].iter().collect();
             let final_corpus: PathBuf = [path.clone(), "minimized_corpus".into()].iter().collect();
             if final_corpus.exists() {
                 std::fs::rename(final_corpus, &corpus)?;
             }
-            if should_minimize {
-                self.minimize_corpus_by_efficient_sancov(&fuzzer_binary, &minimize, &corpus)?;
-                std::fs::remove_dir_all(&corpus)?;
-                std::fs::rename(minimize, &corpus)?;
+            if should_minimize && fuzzer_sancov.exists() {
+                self.minimize_corpus_by_efficient_sancov(&fuzzer_sancov, &minimize, &corpus)?;
+                let kept = minimize.exists() && !crate::deopt::utils::is_dir_empty(&minimize)?;
+                if kept {
+                    std::fs::remove_dir_all(&corpus)?;
+                    std::fs::rename(&minimize, &corpus)?;
+                } else {
+                    log::warn!(
+                        "Minimization kept no files from {corpus:?}; leaving the fused corpus in place"
+                    );
+                    if minimize.exists() {
+                        std::fs::remove_dir_all(&minimize)?;
+                    }
+                }
+            } else if should_minimize {
+                log::warn!(
+                    "Sancov fuzzer {fuzzer_sancov:?} is missing; skipping minimization and keeping {corpus:?}"
+                );
             }
 
             let child = self.spawn_libfuzzer(&fuzzer_binary, &corpus)?;
